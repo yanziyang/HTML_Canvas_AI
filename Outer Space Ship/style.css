@@ -1,0 +1,52 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    color: #fff;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#game {
+    display: block;
+    background: #000;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+#ui {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 10px 16px;
+    pointer-events: none;
+    display: flex;
+    justify-content: flex-end;
+    z-index: 10;
+}
+
+#level {
+    font-size: 20px;
+    color: #6fffe9;
+    text-shadow: 0 0 6px #6fffe9;
+    letter-spacing: 2px;
+}
+
+#message {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #ff6;
+    font-size: 28px;
+    text-shadow: 0 0 8px #ff6;
+    pointer-events: none;
+    display: none;
+    z-index: 20;
+}
