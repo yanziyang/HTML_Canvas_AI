@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Elastic Collisions · 1 kg ↔ 100,000 kg</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: radial-gradient(ellipse at center, #0e1424 0%, #050810 80%);
+    color: #d8e2f0;
+    font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #cv { display: block; width: 100vw; height: 100vh; }
+
+  .panel {
+    position: fixed;
+    background: rgba(10, 16, 30, 0.78);
+    border: 1px solid #1f2c45;
+    border-radius: 8px;
+    padding: 14px 18px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  #hud { top: 14px; left: 14px; min-width: 260px; }
+  #ctrls { top: 14px; right: 14px; width: 280px; }
+  #foot { bottom: 14px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #6b7a96; padding: 8px 14px; }
+
+  h1 {
+    font-size: 12px;
+    margin: 0 0 10px 0;
+    color: #9ab0d0;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    border-bottom: 1px solid #1f2c45;
+    padding-bottom: 6px;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 14px;
+    line-height: 1.65;
+    font-size: 12px;
+  }
+  .lbl { color: #6b7a96; }
+  .val { color: #ffd060; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pi  { color: #66ffb0; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .big { color: #ffa030; font-size: 14px; }
+  .sec { margin-top: 10px; }
+  .sec .lbl { color: #4a5a78; }
+
+  input[type=range] {
+    width: 100%;
+    height: 4px;
+    -webkit-appearance: none;
+    background: linear-gradient(to right, #1f2c45, #1f2c45);
+    border-radius: 2px;
+    margin: 4px 0 8px 0;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    background: #ffd060;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(255,208,96,0.6);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px;
+    background: #ffd060;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 0 8px rgba(255,208,96,0.6);
+  }
+
+  .btnrow { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  button {
+    flex: 1;
+    background: #16203a;
+    color: #d8e2f0;
+    border: 1px solid #2a3a55;
+    padding: 7px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { background: #233150; border-color: #3a5070; }
+  button:active { background: #0e1626; }
+  button.primary { background: #2a3a55; border-color: #4a5a78; color: #ffd060; }
+  button.primary:hover { background: #3a4a65; }
+
+  .legend { display: flex; gap: 14px; font-size: 11px; color: #8a98b0; margin-top: 6px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="hud" class="panel">
+  <h1>ELASTIC COLLISIONS · 1D</h1>
+  <div class="row"><span class="lbl">m (small)</span><span class="val">1.000 kg</span></div>
+  <div class="row"><span class="lbl">M (heavy)</span><span class="val" id="hudM">100,000 kg</span></div>
+  <div class="row sec"><span class="lbl">collisions</span><span class="val big" id="nCol">0</span></div>
+  <div class="row"><span class="lbl">π estimate (N/√M)</span><span class="pi" id="piEst">—</span></div>
+  <div class="row"><span class="lbl">target (π·√M)</span><span class="val" id="piTgt">—</span></div>
+  <div class="row sec"><span class="lbl">kinetic energy</span><span class="val" id="ke">0.000 J</span></div>
+  <div class="row"><span class="lbl">momentum</span><span class="val" id="mom">0.000</span></div>
+  <div class="row sec"><span class="lbl">v_small</span><span class="val" id="vs">0.000 m/s</span></div>
+  <div class="row"><span class="lbl">v_heavy</span><span class="val" id="vh">0.000 m/s</span></div>
+  <div class="row"><span class="lbl">sim time</span><span class="val" id="tSim">0.00 s</span></div>
+  <div class="legend sec">
+    <span><span class="dot" style="background:#ffd060"></span>1 kg</span>
+    <span><span class="dot" style="background:#5a9aff"></span>100,000 kg</span>
+  </div>
+</div>
+
+<div id="ctrls" class="panel">
+  <h1>CONTROLS</h1>
+  <div class="lbl">mass ratio M/m</div>
+  <div class="row"><span></span><span class="val" id="mrV">100,000</span></div>
+  <input type="range" id="mr" min="2" max="100000000" step="1" value="100000">
+
+  <div class="lbl">initial v_heavy (m/s)</div>
+  <div class="row"><span></span><span class="val" id="v0V">1.0</span></div>
+  <input type="range" id="v0" min="0.1" max="50" step="0.1" value="1">
+
+  <div class="lbl">initial v_small (m/s)</div>
+  <div class="row"><span></span><span class="val" id="vsV">0.0</span></div>
+  <input type="range" id="vs0" min="-50" max="50" step="0.1" value="0">
+
+  <div class="lbl">time scale</div>
+  <div class="row"><span></span><span class="val" id="tsV">1.0×</span></div>
+  <input type="range" id="ts" min="0.1" max="20" step="0.1" value="1">
+
+  <div class="lbl">display size scale</div>
+  <div class="row"><span></span><span class="val" id="scV">1.0×</span></div>
+  <input type="range" id="sc" min="0.3" max="3" step="0.1" value="1">
+
+  <div class="btnrow">
+    <button id="playBtn" class="primary">Pause</button>
+    <button id="resetBtn">Reset</button>
+    <button id="kickBtn">Kick</button>
+  </div>
+</div>
+
+<div id="foot" class="panel">
+  exact continuous-collision 1D elastic solver · conservation of KE and momentum enforced analytically
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const cv  = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  let W = 0, H = 0, DPR = 1;
+
+  function resize() {
+    DPR = window.devicePixelRatio || 1;
+    const r = cv.getBoundingClientRect();
+    cv.width  = Math.max(1, Math.floor(r.width  * DPR));
+    cv.height = Math.max(1, Math.floor(r.height * DPR));
+    W = r.width; H = r.height;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+
+  // World coordinates (meters). Wall at x=0.
+  // Heavy block sits to the right of the small block, moving leftward (toward wall).
+  const SIZE_S = 0.4;   // small block half-extent (m) -- display half-width
+  const SIZE_M = 0.8;   // heavy block half-extent (m)
+  const XS_INIT = 6;    // initial small block x
+  const XM_INIT = 12;   // initial heavy block x
+  const XMAX    = 30;   // logical right edge for view
+
+  // State
+  let state, timeScale = 1, playing = true, dispScale = 1;
+
+  function makeState(M, vM0, vs0) {
+    return {
+      m: 1, M,
+      xs: XS_INIT, vs: vs0,
+      xM: XM_INIT, vM: vM0,
+      wallX: 0,
+      collisions: 0,
+      t: 0,
+      trail: [], trailM: [],
+      flash: 0, flashPos: 0, flashKind: '',
+      done: false
+    };
+  }
+
+  // ------- physics: event-driven 1D elastic with continuous collision detection -------
+
+  function nextCollision(s) {
+    const halfS = SIZE_S, halfM = SIZE_M;
+    let tMin = Infinity, kind = null;
+    // wall (small hits wall from the right)
+    if (s.vs < 0) {
+      const t = (s.wallX + halfS - s.xs) / s.vs;
+      if (t > 1e-12 && t < tMin) { tMin = t; kind = 'w'; }
+    }
+    // small catches heavy from behind (small.x + halfS approaches heavy.x - halfM)
+    if (s.vs - s.vM > 0) {
+      const t = (s.xM - halfM - s.xs - halfS) / (s.vs - s.vM);
+      if (t > 1e-12 && t < tMin) { tMin = t; kind = 'b'; }
+    }
+    return { t: tMin, kind };
+  }
+
+  function applyCollision(s, kind) {
+    if (kind === 'w') {
+      s.vs = -s.vs;
+      s.flashPos = s.wallX; s.flashKind = 'wall';
+    } else {
+      const v1 = s.vs, v2 = s.vM, m1 = s.m, m2 = s.M;
+      s.vs = ((m1 - m2) * v1 + 2 * m2 * v2) / (m1 + m2);
+      s.vM = ((m2 - m1) * v2 + 2 * m1 * v1) / (m1 + m2);
+      s.flashPos = 0.5 * (s.xs + s.xM); s.flashKind = 'block';
+    }
+    s.collisions++;
+    s.flash = 1;
+  }
+
+  function advance(s, dt) {
+    if (s.done) return;
+    let remaining = dt;
+    let safety = 200000;
+    while (remaining > 1e-12 && safety-- > 0) {
+      const nc = nextCollision(s);
+      if (!nc.kind || nc.t > remaining) {
+        s.xs += s.vs * remaining;
+        s.xM += s.vM * remaining;
+        s.t  += remaining;
+        remaining = 0;
+      } else {
+        s.xs += s.vs * nc.t;
+        s.xM += s.vM * nc.t;
+        s.t  += nc.t;
+        remaining -= nc.t;
+        applyCollision(s, nc.kind);
+        // Terminate: small has escaped to the right faster than heavy and is past it
+        if (s.xs > s.xM + 4 && s.vs > s.vM) { s.done = true; remaining = 0; }
+      }
+    }
+  }
+
+  // ------- rendering -------
+
+  let viewScale = 30, originX = 80, originY = 0;
+
+  function fitView() {
+    const margin = 70;
+    viewScale = (W - margin * 2) / XMAX;
+    originX   = margin;
+    originY   = H * 0.5;
+  }
+  resize();
+  fitView();
+  window.addEventListener('resize', () => { resize(); fitView(); });
+
+  function px(x)  { return originX + x * viewScale * dispScale; }
+  function pxS(s) { return s * viewScale * dispScale; }
+
+  function drawGrid() {
+    ctx.strokeStyle = 'rgba(60,80,120,0.10)';
+    ctx.lineWidth = 1;
+    const step = 50;
+    for (let x = 0; x < W; x += step) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += step) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+  }
+
+  function drawWall(s) {
+    const wx = px(s.wallX);
+    const top = originY - 200, bot = originY + 200;
+    ctx.fillStyle = '#2a3a55';
+    ctx.fillRect(wx - 7, top, 7, bot - top);
+    ctx.fillStyle = '#3a4a65';
+    ctx.fillRect(wx - 9, top, 2, bot - top);
+    ctx.strokeStyle = '#5a7090';
+    ctx.lineWidth = 1.4;
+    for (let y = top; y < bot; y += 16) {
+      ctx.beginPath();
+      ctx.moveTo(wx - 7, y);
+      ctx.lineTo(wx - 22, y + 8);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#5a7090';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('WALL', wx - 26, top - 14);
+  }
+
+  function drawTrail(s) {
+    // small trail
+    if (s.trail.length > 1) {
+      for (let i = 1; i < s.trail.length; i++) {
+        const a = (i / s.trail.length) * 0.55;
+        const x0 = px(s.trail[i-1]), x1 = px(s.trail[i]);
+        const g = ctx.createLinearGradient(x0, originY, x1, originY);
+        g.addColorStop(0, `rgba(255,208,96,0)`);
+        g.addColorStop(1, `rgba(255,208,96,${a})`);
+        ctx.strokeStyle = g;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(x0, originY);
+        ctx.lineTo(x1, originY);
+        ctx.stroke();
+      }
+    }
+    // heavy trail (very subtle)
+    if (s.trailM.length > 1) {
+      for (let i = 1; i < s.trailM.length; i++) {
+        const a = (i / s.trailM.length) * 0.18;
+        const x0 = px(s.trailM[i-1]), x1 = px(s.trailM[i]);
+        ctx.strokeStyle = `rgba(90,154,255,${a})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(x0, originY);
+        ctx.lineTo(x1, originY);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawBlock(x, halfWidth, fillGrad, label, massStr) {
+    const cx = px(x);
+    const w  = pxS(halfWidth * 2);
+    const h  = w;
+    const left = cx - w/2, top = originY - h/2;
+    ctx.fillStyle = fillGrad;
+    ctx.fillRect(left, top, w, h);
+    ctx.strokeStyle = 'rgba(220,235,255,0.5)';
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(left, top, w, h);
+    // label
+    ctx.fillStyle = '#0a0e1a';
+    ctx.font = `bold ${Math.max(10, Math.min(18, w * 0.22))}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, originY);
+    if (w > 70) {
+      ctx.fillStyle = 'rgba(10,14,26,0.75)';
+      ctx.font = `${Math.max(8, Math.min(12, w * 0.12))}px monospace`;
+      ctx.fillText(massStr, cx, originY + h * 0.28);
+    }
+  }
+
+  function drawSmall(s) {
+    const w = pxS(SIZE_S * 2);
+    const g = ctx.createRadialGradient(px(s.xs), originY, 0, px(s.xs), originY, w);
+    g.addColorStop(0, '#ffe27a');
+    g.addColorStop(0.6, '#ffcc33');
+    g.addColorStop(1, '#cc7a00');
+    ctx.shadowColor = 'rgba(255,180,40,0.6)';
+    ctx.shadowBlur = 16;
+    drawBlock(s.xs, SIZE_S, g, '1 kg', 'small');
+    ctx.shadowBlur = 0;
+  }
+
+  function drawHeavy(s) {
+    const w = pxS(SIZE_M * 2);
+    const g = ctx.createLinearGradient(0, originY - w/2, 0, originY + w/2);
+    g.addColorStop(0, '#7ab8ff');
+    g.addColorStop(0.5, '#3a78d8');
+    g.addColorStop(1, '#1a3878');
+    ctx.shadowColor = 'rgba(80,140,255,0.45)';
+    ctx.shadowBlur = 18;
+    drawBlock(s.xM, SIZE_M, g, formatMass(s.M) + ' kg', 'heavy');
+    ctx.shadowBlur = 0;
+  }
+
+  function drawVelocityArrows(s) {
+    function arrow(xPx, yOff, v, color, sign) {
+      if (Math.abs(v) < 0.005) return;
+      const mag = Math.sqrt(Math.abs(v)) * 14;
+      const len = Math.sign(v) * Math.min(180, mag);
+      const y = originY + yOff;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(xPx, y);
+      ctx.lineTo(xPx + len, y);
+      ctx.stroke();
+      const d = Math.sign(len) || 1;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(xPx + len, y);
+      ctx.lineTo(xPx + len - d * 10, y - 6);
+      ctx.lineTo(xPx + len - d * 10, y + 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      const lbl = (Math.abs(v) >= 1000 ? v.toExponential(2) : v.toFixed(2)) + ' m/s';
+      ctx.fillText(lbl, xPx + len / 2, y - 4);
+    }
+    arrow(px(s.xs), -pxS(SIZE_S) - 30, s.vs, '#ffd060', 0);
+    arrow(px(s.xM), -pxS(SIZE_M) - 30, s.vM, '#8ab8ff', 0);
+  }
+
+  function drawFlash(s) {
+    if (s.flash < 0.04) return;
+    const x = px(s.flashPos);
+    const r0 = 22, r1 = 60;
+    const r = r0 + (1 - s.flash) * (r1 - r0);
+    const c = s.flashKind === 'wall' ? '255,220,120' : '180,220,255';
+    ctx.strokeStyle = `rgba(${c},${s.flash * 0.9})`;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(x, originY, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(${c},${s.flash * 0.35})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(x, originY, r * 1.7, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function drawFloor(s) {
+    const y = originY + Math.max(pxS(SIZE_S), pxS(SIZE_M)) + 26;
+    ctx.strokeStyle = 'rgba(120,150,200,0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  function drawBanner(s) {
+    if (s.done) {
+      ctx.fillStyle = 'rgba(102,255,176,0.85)';
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('small block has escaped · click Reset', W/2, 38);
+    }
+  }
+
+  // ------- HUD -------
+
+  function formatMass(n) {
+    if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (n/1e3).toFixed(2) + 'k';
+    return n.toFixed(0);
+  }
+  function formatFixed(n, d=3) { return (Math.abs(n) < 1e-12 ? 0 : n).toFixed(d); }
+  function formatSci(n) { return Math.abs(n) < 1e-3 ? n.toExponential(3) : n.toFixed(3); }
+
+  function updateHUD(s) {
+    const KE = 0.5 * s.m * s.vs * s.vs + 0.5 * s.M * s.vM * s.vM;
+    const p  = s.m * s.vs + s.M * s.vM;
+    document.getElementById('hudM').textContent  = s.M.toLocaleString() + ' kg';
+    document.getElementById('nCol').textContent  = s.collisions.toLocaleString();
+    document.getElementById('ke').textContent    = KE.toExponential(3) + ' J';
+    document.getElementById('mom').textContent   = formatSci(p);
+    document.getElementById('vs').textContent    = formatSci(s.vs) + ' m/s';
+    document.getElementById('vh').textContent    = formatSci(s.vM) + ' m/s';
+    document.getElementById('tSim').textContent  = s.t.toFixed(2) + ' s';
+    if (s.collisions > 0) {
+      document.getElementById('piEst').textContent = (s.collisions / Math.sqrt(s.M)).toFixed(6);
+    } else {
+      document.getElementById('piEst').textContent = '—';
+    }
+    document.getElementById('piTgt').textContent = (Math.PI * Math.sqrt(s.M)).toFixed(0);
+  }
+
+  // ------- controls wiring -------
+
+  const $ = id => document.getElementById(id);
+
+  function readControls() {
+    return {
+      M:  parseFloat($('mr').value),
+      vM: -parseFloat($('v0').value),
+      vs: parseFloat($('vs0').value)
+    };
+  }
+
+  $('mr').oninput = e => { $('mrV').textContent = parseInt(e.target.value).toLocaleString(); };
+  $('v0').oninput = e => { $('v0V').textContent = parseFloat(e.target.value).toFixed(1); };
+  $('vs0').oninput = e => { $('vsV').textContent = parseFloat(e.target.value).toFixed(1); };
+  $('ts').oninput  = e => { timeScale = parseFloat(e.target.value); $('tsV').textContent = timeScale.toFixed(1) + '×'; };
+  $('sc').oninput  = e => { dispScale = parseFloat(e.target.value); $('scV').textContent = dispScale.toFixed(1) + '×'; };
+
+  $('playBtn').onclick = () => {
+    playing = !playing;
+    $('playBtn').textContent = playing ? 'Pause' : 'Play';
+  };
+  $('resetBtn').onclick = () => { const c = readControls(); state = makeState(c.M, c.vM, c.vs); last = performance.now(); accum = 0; };
+  $('kickBtn').onclick  = () => { if (state) state.vs = -Math.abs(state.vs) - 5; };
+
+  // Spacebar to pause
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space') { e.preventDefault(); $('playBtn').click(); }
+    if (e.code === 'KeyR') $('resetBtn').click();
+  });
+
+  // ------- main loop -------
+
+  state = makeState(1e5, -1, 0);
+  let last = performance.now();
+  let accum = 0;
+
+  function frame(now) {
+    resize();
+    const dtReal = Math.min(0.1, (now - last) / 1000);
+    last = now;
+
+    if (playing) {
+      accum += dtReal * timeScale;
+      // step simulation in modest chunks; event-driven so cheap
+      const chunk = 1 / 30;
+      while (accum >= chunk) {
+        advance(state, chunk);
+        accum -= chunk;
+      }
+      if (accum > 0) advance(state, accum);
+      accum = 0;
+
+      // sample trail
+      state.trail.push(state.xs);
+      if (state.trail.length > 220) state.trail.shift();
+      state.trailM.push(state.xM);
+      if (state.trailM.length > 220) state.trailM.shift();
+
+      state.flash *= 0.88;
+    }
+
+    // draw
+    ctx.fillStyle = '#050810';
+    ctx.fillRect(0, 0, W, H);
+
+    drawGrid();
+    drawFloor(state);
+    drawWall(state);
+    drawTrail(state);
+    drawFlash(state);
+    drawSmall(state);
+    drawHeavy(state);
+    drawVelocityArrows(state);
+    drawBanner(state);
+
+    updateHUD(state);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

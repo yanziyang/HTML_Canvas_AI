@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spring Pendulum · Coil Sim</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body { background: #0a0a14; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #c { display: block; cursor: grab; }
+  #c.dragging { cursor: grabbing; }
+
+  .panel {
+    position: absolute; top: 14px; left: 14px;
+    background: rgba(15,18,28,0.88);
+    padding: 14px 18px 12px;
+    border-radius: 10px;
+    border: 1px solid #262b3a;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font-size: 12px;
+    min-width: 260px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+  }
+  .row { display: flex; align-items: center; margin: 6px 0; gap: 10px; }
+  label { width: 72px; color: #9ab2c8; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px; }
+  input[type=range] { flex: 1; accent-color: #7ad; height: 4px; }
+  span { width: 52px; text-align: right; font-variant-numeric: tabular-nums; color: #cfe8ff; font-size: 11px; }
+  .btns { margin-top: 10px; display: flex; gap: 6px; }
+  button {
+    flex: 1; background: #1a1f2c; color: #cfe8ff;
+    border: 1px solid #2c3242; padding: 7px 0;
+    border-radius: 6px; cursor: pointer; font-size: 11px;
+    font-family: inherit; letter-spacing: 0.3px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #2a3142; }
+  button:active { background: #3a4252; }
+  h1 { margin: 0 0 8px 0; font-size: 11px; color: #7ad; font-weight: 600; letter-spacing: 1.4px; }
+
+  .stats {
+    position: absolute; top: 14px; right: 14px;
+    background: rgba(15,18,28,0.88);
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid #262b3a;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font-size: 11px; line-height: 1.65;
+    font-variant-numeric: tabular-nums;
+    min-width: 150px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .stats .k { color: #6f8aa3; display: inline-block; width: 70px; }
+  .stats b { color: #fc8; font-weight: 600; }
+  .stats hr { border: none; border-top: 1px dashed #2a3040; margin: 4px 0; }
+
+  .hint {
+    position: absolute; bottom: 12px; left: 14px;
+    font-size: 11px; color: #5a6a7e;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .title {
+    position: absolute; bottom: 12px; right: 14px;
+    font-size: 10px; color: #3e4a5e;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    letter-spacing: 1.5px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="panel">
+  <h1>SPRING · PENDULUM</h1>
+  <div class="row"><label>Stiffness</label><input id="k"  type="range" min="0.5" max="20"  step="0.1"  value="4.0"><span id="kv">4.0</span></div>
+  <div class="row"><label>Damping</label><input  id="c_" type="range" min="0"   max="0.3" step="0.005" value="0.01"><span id="cv">0.010</span></div>
+  <div class="row"><label>Gravity</label><input  id="g"  type="range" min="0"   max="600" step="5"    value="280"><span id="gv">280</span></div>
+  <div class="row"><label>Angle</label><input    id="a"  type="range" min="0"   max="89"  step="1"    value="40"><span id="av">40&deg;</span></div>
+  <div class="row"><label>Stretch</label><input  id="s"  type="range" min="0.5" max="2"   step="0.05" value="1.0"><span id="sv">1.00</span></div>
+  <div class="btns">
+    <button id="reset">Reset</button>
+    <button id="pause">Pause</button>
+    <button id="kick">Kick</button>
+  </div>
+</div>
+
+<div class="stats" id="stats"></div>
+<div class="hint">drag the mass to reposition &nbsp;·&nbsp; SPACE: kick &nbsp;·&nbsp; R: reset &nbsp;·&nbsp; P: pause</div>
+<div class="title">SEMI-IMPLICIT EULER · N=8 SUBSTEPS</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+  let W, H;
+
+  // ---- World setup ---------------------------------------------------------
+  const L0 = 140;                      // natural length of the spring (px)
+  const anchor = { x: 0, y: 60 };      // pivot (ceiling attachment)
+
+  // ---- State ---------------------------------------------------------------
+  const state = { x: 0, y: 0, vx: 0, vy: 0 };
+  const trail = [];                    // flat array [x0,y0,x1,y1,...]
+  let paused   = false;
+  let dragging = false;
+  let lastT    = performance.now();
+
+  // ---- Canvas sizing -------------------------------------------------------
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    anchor.x = W / 2;
+    anchor.y = 60;
+    if (state.x === 0 && state.y === 0) reset();
+  }
+  window.addEventListener('resize', resize);
+
+  // ---- Parameters from UI --------------------------------------------------
+  const $ = id => document.getElementById(id);
+  function params() {
+    return {
+      k: parseFloat($('k').value),
+      c: parseFloat($('c_').value),
+      g: parseFloat($('g').value),
+    };
+  }
+
+  // ---- Reset / initial state ----------------------------------------------
+  function reset() {
+    const angle   = parseFloat($('a').value) * Math.PI / 180;
+    const stretch = parseFloat($('s').value);
+    const r0      = L0 * stretch;
+    state.x  = anchor.x + r0 * Math.sin(angle);
+    state.y  = anchor.y + r0 * Math.cos(angle);
+    state.vx = 0;
+    state.vy = 0;
+    trail.length = 0;
+  }
+
+  // ---- Physics: real spring pendulum in 2D --------------------------------
+  // m = 1 (implicit)
+  //   F_spring = -k (r - L0) * r̂     (Hooke, direction = anchor -> mass)
+  //   F_grav   = (0, g)              (canvas y points down)
+  //   F_damp   = -c v
+  //   a = F / m
+  function accel(x, y, vx, vy) {
+    const dx = x - anchor.x;
+    const dy = y - anchor.y;
+    const r  = Math.hypot(dx, dy);
+    if (r < 1e-5) return { ax: 0, ay: params().g };
+    const { k, c, g } = params();
+    const fs = -k * (r - L0);
+    return {
+      ax: fs * dx / r - c * vx,
+      ay: fs * dy / r + g - c * vy,
+    };
+  }
+
+  // Semi-implicit (symplectic) Euler with N substeps for stability.
+  function step(dt) {
+    const N = 8;
+    const h = dt / N;
+    for (let i = 0; i < N; i++) {
+      const a = accel(state.x, state.y, state.vx, state.vy);
+      state.vx += a.ax * h;
+      state.vy += a.ay * h;
+      state.x  += state.vx * h;
+      state.y  += state.vy * h;
+    }
+  }
+
+  // ---- Main loop -----------------------------------------------------------
+  function frame(t) {
+    const dt = Math.min((t - lastT) / 1000, 0.05);
+    lastT = t;
+
+    if (!paused && !dragging) step(dt);
+
+    if (!dragging) {
+      trail.push(state.x, state.y);
+      const maxPts = 320;
+      const have = trail.length / 2;
+      if (have > maxPts) trail.splice(0, (have - maxPts) * 2);
+    }
+
+    draw();
+    updateStats();
+    requestAnimationFrame(frame);
+  }
+
+  // ---- Rendering -----------------------------------------------------------
+  function drawBackground() {
+    ctx.fillStyle = '#0a0a14';
+    ctx.fillRect(0, 0, W, H);
+
+    // Subtle grid
+    ctx.strokeStyle = 'rgba(60,70,100,0.10)';
+    ctx.lineWidth = 1;
+    const gs = 50;
+    const ox = ((anchor.x % gs) + gs) % gs;
+    for (let x = ox; x < W; x += gs) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = (anchor.y % gs); y < H; y += gs) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+  }
+
+  function drawCeiling() {
+    // Hatched bar across the top
+    const barY = anchor.y - 4;
+    const grad = ctx.createLinearGradient(0, barY, 0, barY + 4);
+    grad.addColorStop(0, '#1a1f2c');
+    grad.addColorStop(1, '#262d3d');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, barY, W, 4);
+
+    // Pivot
+    ctx.fillStyle = '#445566';
+    ctx.beginPath();
+    ctx.arc(anchor.x, anchor.y, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#8aa0b8';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+  }
+
+  function drawNaturalLengthGuide() {
+    // Dashed circle showing the spring's natural length
+    ctx.strokeStyle = 'rgba(120,170,200,0.10)';
+    ctx.setLineDash([3, 7]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(anchor.x, anchor.y, L0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawTrail() {
+    const n = trail.length / 2;
+    if (n < 2) return;
+    for (let i = 1; i < n; i++) {
+      const a = i / n;
+      ctx.strokeStyle = `rgba(255,150,80,${a * 0.75})`;
+      ctx.lineWidth = a * 2.4;
+      ctx.beginPath();
+      ctx.moveTo(trail[(i-1)*2], trail[(i-1)*2 + 1]);
+      ctx.lineTo(trail[i*2],     trail[i*2 + 1]);
+      ctx.stroke();
+    }
+  }
+
+  // Draw the coil as a sine-wave-perpendicular-to-spring (a coil viewed sideways).
+  // Loops scale with length so the spring looks like it stretches.
+  function drawCoil(x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) return;
+
+    const ux = dx / len, uy = dy / len;
+    const px = -uy, py = ux;           // perpendicular unit
+
+    // More length = more visible loops. Constant amplitude = realistic coil look.
+    const loops = Math.max(8, Math.round(len / 6));
+    const amp   = 7;
+    const segs  = loops * 14;
+
+    // Faint "back" stroke for depth
+    ctx.strokeStyle = 'rgba(60,90,120,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const off = Math.sin(t * loops * 2 * Math.PI) * amp;
+      const cx = x1 + dx * t + px * off;
+      const cy = y1 + dy * t + py * off;
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    }
+    ctx.stroke();
+
+    // Front (bright) stroke offset by half a phase so the wire crosses visibly
+    const half = Math.PI / loops;
+    const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+    grad.addColorStop(0,   '#5b89a8');
+    grad.addColorStop(0.5, '#a0d4ea');
+    grad.addColorStop(1,   '#5b89a8');
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const off = Math.sin(t * loops * 2 * Math.PI + half) * amp;
+      const cx = x1 + dx * t + px * off;
+      const cy = y1 + dy * t + py * off;
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    }
+    ctx.stroke();
+  }
+
+  function drawMass() {
+    // Outer glow
+    const glow = ctx.createRadialGradient(state.x, state.y, 0, state.x, state.y, 26);
+    glow.addColorStop(0,   'rgba(255,160,80,0.35)');
+    glow.addColorStop(1,   'rgba(255,160,80,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(state.x, state.y, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body
+    const g = ctx.createRadialGradient(state.x - 3, state.y - 3, 1, state.x, state.y, 14);
+    g.addColorStop(0,    '#ffe2a0');
+    g.addColorStop(0.55, '#f4883a');
+    g.addColorStop(1,    '#a83a14');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(state.x, state.y, 13, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#fff3c8';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // Speck highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath();
+    ctx.arc(state.x - 4, state.y - 5, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawReadout() {
+    const r = Math.hypot(state.x - anchor.x, state.y - anchor.y);
+    const stretch = (r / L0 * 100).toFixed(0);
+    const text = `r=${r.toFixed(1)}   L0=${L0}   stretch=${stretch}%`;
+    ctx.fillStyle = '#7ad';
+    ctx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillText(text, 14, H - 14);
+  }
+
+  function draw() {
+    drawBackground();
+    drawCeiling();
+    drawNaturalLengthGuide();
+    drawTrail();
+    drawCoil(anchor.x, anchor.y, state.x, state.y);
+    drawMass();
+    drawReadout();
+  }
+
+  // ---- Stats / energy readout ---------------------------------------------
+  function updateStats() {
+    const r = Math.hypot(state.x - anchor.x, state.y - anchor.y);
+    const { k, g } = params();
+    const v2     = state.vx * state.vx + state.vy * state.vy;
+    const KE     = 0.5 * v2;
+    const PE_s   = 0.5 * k * (r - L0) * (r - L0);
+    const PE_g   = g * (anchor.y - state.y);    // PE_g = 0 at anchor, decreases as mass falls
+    const E      = KE + PE_s + PE_g;
+    $('stats').innerHTML =
+      `<span class="k">KE</span>${KE.toFixed(1)}<br>` +
+      `<span class="k">PE spring</span>${PE_s.toFixed(1)}<br>` +
+      `<span class="k">PE grav</span>${PE_g.toFixed(1)}<br>` +
+      `<hr><span class="k">E</span><b>${E.toFixed(1)}</b>`;
+  }
+
+  // ---- UI wiring -----------------------------------------------------------
+  function bind(id, vid, fmt) {
+    const el = $(id), v = $(vid);
+    const update = () => v.innerHTML = fmt(el.value);
+    el.addEventListener('input', update);
+    update();
+  }
+  bind('k',  'kv', v => parseFloat(v).toFixed(1));
+  bind('c_', 'cv', v => parseFloat(v).toFixed(3));
+  bind('g',  'gv', v => parseFloat(v).toFixed(0));
+  bind('a',  'av', v => v + '\u00B0');
+  bind('s',  'sv', v => parseFloat(v).toFixed(2));
+
+  $('reset').onclick = reset;
+  $('pause').onclick = e => {
+    paused = !paused;
+    e.target.textContent = paused ? 'Resume' : 'Pause';
+  };
+  $('kick').onclick = () => {
+    state.vx += (Math.random() - 0.5) * 500;
+    state.vy += (Math.random() - 0.5) * 500;
+  };
+
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.code === 'Space')      { $('kick').click();  e.preventDefault(); }
+    else if (e.key === 'r' || e.key === 'R') reset();
+    else if (e.key === 'p' || e.key === 'P') $('pause').click();
+  });
+
+  // ---- Pointer interaction ------------------------------------------------
+  function getPos(e) {
+    if (e.touches && e.touches.length) return [e.touches[0].clientX, e.touches[0].clientY];
+    return [e.clientX, e.clientY];
+  }
+  function onDown(e) {
+    const [mx, my] = getPos(e);
+    const dx = mx - state.x, dy = my - state.y;
+    if (dx*dx + dy*dy < 30*30) {
+      dragging = true;
+      canvas.classList.add('dragging');
+      state.vx = state.vy = 0;
+      e.preventDefault();
+    }
+  }
+  function onMove(e) {
+    if (!dragging) return;
+    const [mx, my] = getPos(e);
+    state.x = mx; state.y = my;
+    state.vx = state.vy = 0;
+    e.preventDefault();
+  }
+  function onUp() {
+    if (dragging) {
+      dragging = false;
+      canvas.classList.remove('dragging');
+    }
+  }
+  canvas.addEventListener('mousedown',  onDown);
+  window.addEventListener('mousemove',  onMove);
+  window.addEventListener('mouseup',    onUp);
+  canvas.addEventListener('touchstart', onDown, { passive: false });
+  window.addEventListener('touchmove',  onMove, { passive: false });
+  window.addEventListener('touchend',   onUp);
+
+  // ---- Boot ----------------------------------------------------------------
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
